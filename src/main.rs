@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use eframe::egui::{self, Align, Color32, Frame, Layout, RichText, Stroke, Vec2};
-use unique_uid::{CopyBatch, Error, SavedCopy, create_copies, read_uid};
+use unique_uid::{CopyBatch, CopyMode, Error, PreparedCopies, SavedCopy, prepare_copies, read_uid};
 
 const WIDTH: f32 = 410.0;
 const BASE_HEIGHT: f32 = 193.0;
@@ -78,7 +78,19 @@ fn main() -> eframe::Result {
 
 enum Completed {
     File(PathBuf, Result<u64, Error>),
+    Prepared(Result<PreparedCopies, Error>),
     Copies(Result<CopyBatch, Error>),
+}
+
+enum Confirmation {
+    Timeline(PreparedCopies),
+    BinOnly(String),
+}
+
+enum Decision {
+    Wait,
+    Cancel,
+    Create,
 }
 
 struct UniqueUid {
@@ -92,6 +104,8 @@ struct UniqueUid {
     show_saved: bool,
     height: f32,
     supports_file_drop: bool,
+    independent: bool,
+    confirmation: Option<Confirmation>,
 }
 
 impl Default for UniqueUid {
@@ -107,6 +121,8 @@ impl Default for UniqueUid {
             show_saved: false,
             height: BASE_HEIGHT,
             supports_file_drop: true,
+            independent: true,
+            confirmation: None,
         }
     }
 }
@@ -146,6 +162,13 @@ impl UniqueUid {
         });
     }
 
+    fn bin_selected(&self) -> bool {
+        self.source.as_ref().is_some_and(|(path, _)| {
+            path.extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("avb"))
+        })
+    }
+
     fn copy(&mut self, ctx: &egui::Context) {
         let (Some((source, _)), Some(destination), Some(count)) =
             (&self.source, self.output_folder(), self.count())
@@ -155,12 +178,23 @@ impl UniqueUid {
         let source = source.clone();
         let destination = destination.to_owned();
         let excluded = self.issued_uids.clone();
-        self.start(ctx, "Creating copies…", move || {
-            Completed::Copies(create_copies(&source, &destination, count, excluded))
+        let mode = if self.independent && self.bin_selected() {
+            CopyMode::Independent
+        } else {
+            CopyMode::DocumentOnly
+        };
+        self.start(ctx, "Checking file…", move || {
+            Completed::Prepared(prepare_copies(&source, &destination, count, excluded, mode))
         });
     }
 
-    fn poll_work(&mut self) {
+    fn save(&mut self, ctx: &egui::Context, batch: PreparedCopies, confirmed: bool) {
+        self.start(ctx, "Creating copies…", move || {
+            Completed::Copies(batch.save(confirmed))
+        });
+    }
+
+    fn poll_work(&mut self, ctx: &egui::Context) {
         let Some((_, result)) = &self.work else {
             return;
         };
@@ -175,15 +209,70 @@ impl UniqueUid {
         };
         self.work = None;
         match message {
-            Completed::File(path, Ok(uid)) => self.source = Some((path, uid)),
+            Completed::File(path, Ok(uid)) => {
+                self.source = Some((path, uid));
+                self.independent = true;
+            }
+            Completed::Prepared(Ok(batch)) if batch.has_timeline() => {
+                self.confirmation = Some(Confirmation::Timeline(batch));
+            }
+            Completed::Prepared(Ok(batch)) => self.save(ctx, batch, false),
+            Completed::Prepared(Err(error @ Error::IndependentBin(_))) => {
+                self.confirmation = Some(Confirmation::BinOnly(error.to_string()));
+            }
             Completed::Copies(Ok(batch)) => {
                 self.issued_uids
                     .extend(batch.copies.iter().map(|copy| copy.uid));
                 self.saved = batch.copies;
                 self.error = batch.error.map(|error| error.to_string());
             }
-            Completed::File(_, Err(error)) | Completed::Copies(Err(error)) => {
+            Completed::File(_, Err(error))
+            | Completed::Prepared(Err(error))
+            | Completed::Copies(Err(error)) => {
                 self.error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn confirm(&mut self, ctx: &egui::Context) {
+        let Some(confirmation) = &self.confirmation else {
+            return;
+        };
+        let response = egui::Modal::new(egui::Id::new("confirm_copy")).show(ctx, |ui| {
+            ui.set_width(315.0);
+            let label = match confirmation {
+                Confirmation::Timeline(batch) => {
+                    ui.heading("This bin contains a timeline");
+                    ui.label("The copied timelines still use their original source clips. The visible clip copies in this bin have their own metadata.");
+                    if batch.count() == 1 { "Create Copy" } else { "Create Copies" }
+                }
+                Confirmation::BinOnly(reason) => {
+                    ui.heading("Independent metadata unavailable");
+                    ui.label(reason);
+                    ui.label("Bin-only copies share clip and timeline metadata with the original.");
+                    "Create Bin-only Copy"
+                }
+            };
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    return Decision::Cancel;
+                }
+                if ui.button(label).clicked() {
+                    return Decision::Create;
+                }
+                Decision::Wait
+            }).inner
+        });
+        if response.should_close() || matches!(response.inner, Decision::Cancel) {
+            self.confirmation = None;
+        } else if matches!(response.inner, Decision::Create) {
+            match self.confirmation.take().unwrap() {
+                Confirmation::Timeline(batch) => self.save(ctx, batch, true),
+                Confirmation::BinOnly(_) => {
+                    self.independent = false;
+                    self.copy(ctx);
+                }
             }
         }
     }
@@ -369,6 +458,11 @@ impl UniqueUid {
                             );
                     });
                 });
+                if self.bin_selected() {
+                    ui.separator();
+                    ui.checkbox(&mut self.independent, "Independent metadata")
+                        .on_hover_text("Give the visible items in each copy their own identities.");
+                }
             });
     }
 
@@ -432,14 +526,15 @@ impl UniqueUid {
 
 impl eframe::App for UniqueUid {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.poll_work();
+        self.poll_work(ctx);
+        let can_edit = self.work.is_none() && self.confirmation.is_none();
         let (hovering, dropped) = ctx.input(|input| {
             (
                 !input.raw.hovered_files.is_empty(),
                 input.raw.dropped_files.clone(),
             )
         });
-        if self.work.is_none() && !dropped.is_empty() {
+        if can_edit && !dropped.is_empty() {
             match dropped.as_slice() {
                 [file] if file.path.is_some() => {
                     self.show_saved = false;
@@ -454,6 +549,7 @@ impl eframe::App for UniqueUid {
             252.0
         } else {
             BASE_HEIGHT
+                + if self.bin_selected() { 26.0 } else { 0.0 }
                 + if has_status { 25.0 } else { 0.0 }
                 + if self.error.is_some() { 22.0 } else { 0.0 }
         };
@@ -473,14 +569,14 @@ impl eframe::App for UniqueUid {
                     self.saved_view(ui);
                     return;
                 }
-                ui.add_enabled_ui(self.work.is_none(), |ui| {
+                ui.add_enabled_ui(can_edit, |ui| {
                     self.drop_tile(ui, frame, hovering);
                     ui.add_space(5.0);
                     self.settings(ui, frame);
                 });
                 ui.add_space(10.0);
                 ui.vertical_centered(|ui| {
-                    let enabled = self.work.is_none()
+                    let enabled = can_edit
                         && self.source.is_some()
                         && self.output_folder().is_some()
                         && self.count().is_some();
@@ -505,6 +601,7 @@ impl eframe::App for UniqueUid {
                     self.feedback(ui);
                 });
             });
+        self.confirm(ctx);
     }
 }
 

@@ -16,6 +16,10 @@ pub enum Error {
     UnsupportedRootLayout,
     #[error("The file has an incomplete or invalid Avid object.")]
     Truncated,
+    #[error("Independent metadata is unavailable for this bin. {0}")]
+    IndependentBin(String),
+    #[error("This bin needs confirmation because it contains a timeline.")]
+    TimelineConfirmation,
     #[error("Enter a copy count of at least 1.")]
     InvalidCount,
     #[error("Could not {} {}: {error}", .action, .path.display())]
@@ -38,14 +42,14 @@ impl Error {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Bin,
     Script,
 }
 
 impl Kind {
-    fn from_path(path: &Path) -> Result<Self, Error> {
+    pub(crate) fn from_path(path: &Path) -> Result<Self, Error> {
         match path.extension().and_then(|extension| extension.to_str()) {
             Some(ext) if ext.eq_ignore_ascii_case("avb") => Ok(Self::Bin),
             Some(ext) if ext.eq_ignore_ascii_case("avc") => Ok(Self::Script),
@@ -57,6 +61,7 @@ impl Kind {
 pub(crate) struct Document {
     pub uid: u64,
     pub offset: usize,
+    pub count_offset: usize,
     kind: Kind,
     order: ByteOrder,
 }
@@ -98,6 +103,7 @@ impl Document {
         }
 
         reader.text()?; // Save date.
+        let count_offset = reader.offset;
         let count = reader.u32()? as usize;
         let root_index = reader.u32()? as usize;
         reader.take(20)?;
@@ -163,6 +169,7 @@ impl Document {
         Ok(Self {
             uid,
             offset,
+            count_offset,
             kind,
             order,
         })

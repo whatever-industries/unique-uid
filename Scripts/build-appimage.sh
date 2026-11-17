@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-version="$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' Cargo.toml)"
+version="$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?)"$/\1/p' Cargo.toml)"
 tool_tag=1-alpha-20251107-1
 architecture="$(uname -m)"
 case "$architecture" in
@@ -33,7 +33,7 @@ printf '%s  %s\n' "$tool_digest" \
 chmod +x "$tool_dir/$tool_name"
 
 mkdir -p dist "$tool_dir/AppDir/usr/share/licenses/unique-uid"
-install -m 644 LICENSE assets/Inter-OFL.txt "$tool_dir/AppDir/usr/share/licenses/unique-uid/"
+install -m 644 LICENSE THIRD_PARTY_NOTICES.txt assets/Inter-OFL.txt "$tool_dir/AppDir/usr/share/licenses/unique-uid/"
 install -m 644 assets/icon.png "$tool_dir/unique-uid.png"
 # Winit opens this library dynamically, so dependency scanning cannot see it.
 xkb_x11="$(ldconfig -p | awk '$1 == "libxkbcommon-x11.so.0" && !found++ {print $NF}')"

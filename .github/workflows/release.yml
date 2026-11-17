@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - 'beta/**'
 
 permissions:
   contents: read
@@ -50,16 +52,15 @@ jobs:
         shell: bash
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
-      - name: Verify version
+      - name: Resolve package version
         shell: bash
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
-          version="$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*$/\1/p' Cargo.toml)"
-          if [[ -z "$version" || "$TAG" != "v$version" ]]; then
+          version="$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?)"[[:space:]]*$/\1/p' Cargo.toml)"
+          if [[ -z "$version" || ( "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ) ]]; then
             echo "The release tag must match Cargo.toml (v$version)." >&2
             exit 1
           fi
+          echo "TAG=v$version" >> "$GITHUB_ENV"
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -84,7 +85,6 @@ jobs:
       - name: Package macOS app
         if: runner.os == 'macOS'
         env:
-          TAG: ${{ github.ref_name }}
           PLATFORM: ${{ matrix.platform }}
           TARGET: ${{ matrix.rust_target }}
           ARCH: ${{ matrix.architecture }}
@@ -101,7 +101,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          TAG: ${{ github.ref_name }}
           PLATFORM: ${{ matrix.platform }}
           TARGET: ${{ matrix.rust_target }}
           PE_MACHINE: ${{ matrix.pe_machine }}
@@ -137,7 +136,6 @@ jobs:
       - name: Package and launch Linux AppImage
         if: runner.os == 'Linux'
         env:
-          TAG: ${{ github.ref_name }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
@@ -168,6 +166,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
+    if: github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -213,6 +212,10 @@ jobs:
           } > release-body.md
 
           title="Unique UID $TAG"
+          flags=()
+          if [[ "$TAG" == *-beta.* ]]; then
+            flags=(--prerelease --latest=false)
+          fi
           draft=$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)
           case "$draft" in
             false)
@@ -220,11 +223,11 @@ jobs:
               exit 0
               ;;
             true)
-              gh release edit "$TAG" --title "$title" --notes-file release-body.md
+              gh release edit "$TAG" --title "$title" --notes-file release-body.md "${flags[@]}"
               gh release upload "$TAG" "${assets[@]}" --clobber
               ;;
             *)
-              gh release create "$TAG" "${assets[@]}" --verify-tag --draft --title "$title" --notes-file release-body.md
+              gh release create "$TAG" "${assets[@]}" --verify-tag --draft --title "$title" --notes-file release-body.md "${flags[@]}"
               ;;
           esac
 

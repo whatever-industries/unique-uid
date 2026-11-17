@@ -2,7 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-version="$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' Cargo.toml)"
+version="$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?)"$/\1/p' Cargo.toml)"
+bundle_version="${version%%-*}"
 app="dist/Unique UID.app"
 target=${1:-}
 compiler_flags=()
@@ -18,7 +19,7 @@ MACOSX_DEPLOYMENT_TARGET=14.0 CARGO_PROFILE_RELEASE_DEBUG=${CARGO_PROFILE_RELEAS
 resources="$app/Contents/Resources"
 mkdir -p "$app/Contents/MacOS" "$resources"
 install -m 755 "$bin_dir/unique-uid" "$app/Contents/MacOS/UniqueUID"
-install -m 644 LICENSE assets/Inter-OFL.txt "$resources/"
+install -m 644 LICENSE THIRD_PARTY_NOTICES.txt assets/Inter-OFL.txt "$resources/"
 
 icon_dir="$(mktemp -d)"
 trap 'find "$icon_dir" -depth -delete' EXIT
@@ -49,8 +50,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>$version</string>
+    <string>$bundle_version</string>
     <key>CFBundleVersion</key>
+    <string>$bundle_version</string>
+    <key>UniqueUIDReleaseVersion</key>
     <string>$version</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>

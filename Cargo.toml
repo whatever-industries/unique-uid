@@ -1,6 +1,6 @@
 [package]
 name = "unique-uid"
-version = "1.1.1"
+version = "1.2.0-beta.1"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
@@ -8,6 +8,7 @@ description = "Duplicate Avid Media Composer bins and scripts with fresh UIDs."
 repository = "https://github.com/whatever-industries/unique-uid"
 
 [dependencies]
+avid-reader = { git = "https://github.com/whatever-industries/any-nle.git", rev = "5a270c3539e398e667ffc819f1880dd1c71f98f5" }
 eframe = { version = "0.33.3", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 getrandom = { version = "0.4", features = ["std"] }
 open = "5"

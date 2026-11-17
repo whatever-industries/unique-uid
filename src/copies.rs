@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use tempfile::Builder;
 
-use crate::avid::{Document, Error};
+use crate::avid::{Document, Error, Kind};
+use crate::independent::IndependentBin;
 
 pub struct SavedCopy {
     pub path: PathBuf,
@@ -18,64 +19,145 @@ pub struct CopyBatch {
     pub error: Option<Error>,
 }
 
-pub fn create_copies(
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CopyMode {
+    DocumentOnly,
+    Independent,
+}
+
+enum Snapshot {
+    Document(Vec<u8>),
+    Independent {
+        bin: Box<IndependentBin>,
+        first: Option<Vec<u8>>,
+    },
+}
+
+pub struct PreparedCopies {
+    document: Document,
+    snapshot: Snapshot,
+    stem: OsString,
+    extension: String,
+    destination: PathBuf,
+    count: usize,
+    excluded: HashSet<u64>,
+}
+
+impl PreparedCopies {
+    pub fn has_timeline(&self) -> bool {
+        matches!(&self.snapshot, Snapshot::Independent { bin, .. } if bin.has_timeline)
+    }
+
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    pub fn save(mut self, timeline_confirmed: bool) -> Result<CopyBatch, Error> {
+        if self.has_timeline() && !timeline_confirmed {
+            return Err(Error::TimelineConfirmation);
+        }
+        let mut batch = CopyBatch::default();
+        let mut index: u64 = 1;
+        for _ in 0..self.count {
+            let result = (|| {
+                let uid = unique_uid(&mut self.excluded)?;
+                let independent = matches!(self.snapshot, Snapshot::Independent { .. });
+                let mut independent_bytes;
+                let data = match &mut self.snapshot {
+                    Snapshot::Document(data) => data,
+                    Snapshot::Independent { bin, first } => {
+                        independent_bytes = match first.take() {
+                            Some(bytes) => bytes,
+                            None => bin.render()?,
+                        };
+                        &mut independent_bytes
+                    }
+                };
+                if independent {
+                    Document::parse(data, Kind::Bin)?.replace_uid(data, uid);
+                } else {
+                    self.document.replace_uid(data, uid);
+                }
+                let mut file = Builder::new()
+                    .prefix(".unique-uid-")
+                    .tempfile_in(&self.destination)
+                    .map_err(|error| Error::file("prepare a copy in", &self.destination, error))?;
+                file.write_all(data)
+                    .map_err(|error| Error::file("write a copy in", &self.destination, error))?;
+
+                loop {
+                    let suffix = if index == 1 {
+                        format!(" Copy.{}", self.extension)
+                    } else {
+                        format!(" Copy {index}.{}", self.extension)
+                    };
+                    index += 1;
+                    let path = self.destination.join(copy_name(&self.stem, &suffix));
+                    match file.persist_noclobber(&path) {
+                        Ok(_) => return Ok(SavedCopy { path, uid }),
+                        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
+                            file = error.file;
+                        }
+                        Err(error) => return Err(Error::file("save", &path, error.error)),
+                    }
+                }
+            })();
+
+            match result {
+                Ok(copy) => batch.copies.push(copy),
+                Err(error) => {
+                    batch.error = Some(error);
+                    break;
+                }
+            }
+        }
+        Ok(batch)
+    }
+}
+
+pub fn prepare_copies(
     source: &Path,
     destination: &Path,
     count: usize,
     mut excluded: HashSet<u64>,
-) -> Result<CopyBatch, Error> {
+    mode: CopyMode,
+) -> Result<PreparedCopies, Error> {
     if count == 0 {
         return Err(Error::InvalidCount);
     }
 
-    let (document, mut data) = Document::snapshot(source)?;
-    let stem = source.file_stem().ok_or(Error::UnsupportedFile)?;
-    let extension = source
-        .extension()
-        .ok_or(Error::UnsupportedFile)?
-        .to_string_lossy();
+    let kind = Kind::from_path(source)?;
+    let (document, data) = Document::snapshot(source)?;
+    let snapshot = if kind == Kind::Bin && mode == CopyMode::Independent {
+        let mut bin = Box::new(IndependentBin::prepare(&document, data)?);
+        let first = Some(bin.render()?);
+        Snapshot::Independent { bin, first }
+    } else {
+        Snapshot::Document(data)
+    };
     excluded.extend([0, document.uid]);
-    let mut batch = CopyBatch::default();
-    let mut index: u64 = 1;
+    Ok(PreparedCopies {
+        document,
+        snapshot,
+        stem: source.file_stem().ok_or(Error::UnsupportedFile)?.to_owned(),
+        extension: source
+            .extension()
+            .ok_or(Error::UnsupportedFile)?
+            .to_string_lossy()
+            .into_owned(),
+        destination: destination.to_owned(),
+        count,
+        excluded,
+    })
+}
 
-    for _ in 0..count {
-        let result = (|| {
-            let uid = unique_uid(&mut excluded)?;
-            document.replace_uid(&mut data, uid);
-            let mut file = Builder::new()
-                .prefix(".unique-uid-")
-                .tempfile_in(destination)
-                .map_err(|error| Error::file("prepare a copy in", destination, error))?;
-            file.write_all(&data)
-                .map_err(|error| Error::file("write a copy in", destination, error))?;
-
-            loop {
-                let suffix = if index == 1 {
-                    format!(" Copy.{extension}")
-                } else {
-                    format!(" Copy {index}.{extension}")
-                };
-                index += 1;
-                let path = destination.join(copy_name(stem, &suffix));
-                match file.persist_noclobber(&path) {
-                    Ok(_) => return Ok(SavedCopy { path, uid }),
-                    Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
-                        file = error.file;
-                    }
-                    Err(error) => return Err(Error::file("save", &path, error.error)),
-                }
-            }
-        })();
-
-        match result {
-            Ok(copy) => batch.copies.push(copy),
-            Err(error) => {
-                batch.error = Some(error);
-                break;
-            }
-        }
-    }
-    Ok(batch)
+pub fn create_copies(
+    source: &Path,
+    destination: &Path,
+    count: usize,
+    excluded: HashSet<u64>,
+) -> Result<CopyBatch, Error> {
+    prepare_copies(source, destination, count, excluded, CopyMode::DocumentOnly)?.save(false)
 }
 
 fn unique_uid(excluded: &mut HashSet<u64>) -> Result<u64, Error> {
