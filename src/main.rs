@@ -14,6 +14,7 @@ const SURFACE: Color32 = Color32::from_rgb(35, 39, 48);
 const TEXT: Color32 = Color32::from_rgb(234, 238, 247);
 const MUTED: Color32 = Color32::from_rgb(174, 183, 202);
 const BLUE: Color32 = Color32::from_rgb(74, 112, 186);
+const ACTION_DISABLED: Color32 = Color32::from_rgb(52, 62, 82);
 const PALE_BLUE: Color32 = Color32::from_rgb(172, 197, 248);
 const OUTLINE: Color32 = Color32::from_rgb(64, 72, 91);
 const WARNING: Color32 = Color32::from_rgb(255, 209, 128);
@@ -27,12 +28,29 @@ fn main() -> eframe::Result {
     if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")) {
         viewport = viewport.with_icon(icon);
     }
+    let options = eframe::NativeOptions {
+        viewport,
+        ..Default::default()
+    };
+    #[cfg(target_os = "linux")]
+    let (options, supports_file_drop) = {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+
+        let mut options = options;
+        let has_x11 = std::env::var_os("DISPLAY").is_some_and(|display| !display.is_empty());
+        if has_x11 {
+            // Winit 0.30 only implements incoming Linux file drops in its X11 backend.
+            options.event_loop_builder = Some(Box::new(|builder| {
+                builder.with_x11();
+            }));
+        }
+        (options, has_x11)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let supports_file_drop = true;
     eframe::run_native(
         "Unique UID",
-        eframe::NativeOptions {
-            viewport,
-            ..Default::default()
-        },
+        options,
         Box::new(|cc| {
             let mut visuals = egui::Visuals::dark();
             visuals.override_text_color = Some(TEXT);
@@ -50,7 +68,10 @@ fn main() -> eframe::Result {
                 .or_default()
                 .insert(0, "Inter".into());
             cc.egui_ctx.set_fonts(fonts);
-            Ok(Box::new(UniqueUid::default()))
+            Ok(Box::new(UniqueUid {
+                supports_file_drop,
+                ..Default::default()
+            }))
         }),
     )
 }
@@ -70,6 +91,7 @@ struct UniqueUid {
     work: Option<(&'static str, Receiver<Completed>)>,
     show_saved: bool,
     height: f32,
+    supports_file_drop: bool,
 }
 
 impl Default for UniqueUid {
@@ -84,6 +106,7 @@ impl Default for UniqueUid {
             work: None,
             show_saved: false,
             height: BASE_HEIGHT,
+            supports_file_drop: true,
         }
     }
 }
@@ -249,7 +272,11 @@ impl UniqueUid {
             painter.text(
                 egui::pos2(left, rect.center().y),
                 egui::Align2::LEFT_CENTER,
-                "Drop an Avid .avb or .avc file",
+                if self.supports_file_drop {
+                    "Drop an Avid .avb or .avc file"
+                } else {
+                    "Open an Avid .avb or .avc file"
+                },
                 egui::FontId::proportional(14.0),
                 TEXT,
             );
@@ -451,7 +478,7 @@ impl eframe::App for UniqueUid {
                     ui.add_space(5.0);
                     self.settings(ui, frame);
                 });
-                ui.add_space(6.0);
+                ui.add_space(10.0);
                 ui.vertical_centered(|ui| {
                     let enabled = self.work.is_none()
                         && self.source.is_some()
@@ -466,7 +493,8 @@ impl eframe::App for UniqueUid {
                         .add_enabled(
                             enabled,
                             egui::Button::new(RichText::new(label).size(14.0).strong())
-                                .fill(if enabled { BLUE } else { SURFACE })
+                                .fill(if enabled { BLUE } else { ACTION_DISABLED })
+                                .stroke(Stroke::new(1.0, if enabled { PALE_BLUE } else { MUTED }))
                                 .corner_radius(8)
                                 .min_size(Vec2::new(160.0, 32.0)),
                         )

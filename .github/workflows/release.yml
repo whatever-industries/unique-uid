@@ -58,7 +58,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwayland-dev libxkbcommon-dev libgl1-mesa-dev \
-            libegl1-mesa-dev libgl1-mesa-dri desktop-file-utils patchelf xvfb xauth xdotool
+            libegl1-mesa-dev libgl1-mesa-dri libxkbcommon-x11-0 desktop-file-utils patchelf xvfb xauth xdotool
 
       - name: Test
         run: cargo test --locked

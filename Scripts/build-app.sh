@@ -11,7 +11,9 @@ if [[ -n "$target" ]]; then
     compiler_flags=(--target "$target")
     bin_dir="target/$target/release"
 fi
-MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --locked --release --target-dir target ${compiler_flags[@]+"${compiler_flags[@]}"}
+# Preserve proc-macro line tables for Xcode 27's stricter dylib loader.
+MACOSX_DEPLOYMENT_TARGET=14.0 CARGO_PROFILE_RELEASE_DEBUG=${CARGO_PROFILE_RELEASE_DEBUG:-1} \
+    cargo build --locked --release --target-dir target ${compiler_flags[@]+"${compiler_flags[@]}"}
 
 resources="$app/Contents/Resources"
 mkdir -p "$app/Contents/MacOS" "$resources"

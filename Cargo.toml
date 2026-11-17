@@ -15,5 +15,8 @@ rfd = "0.18"
 tempfile = "3"
 thiserror = "2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30.13", default-features = false, features = ["x11"] }
+
 [build-dependencies]
 winresource = "0.1"

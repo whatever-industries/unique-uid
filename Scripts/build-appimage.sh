@@ -20,9 +20,15 @@ chmod +x "$tool_dir/$tool_name"
 mkdir -p dist "$tool_dir/AppDir/usr/share/licenses/unique-uid"
 install -m 644 LICENSE assets/Inter-OFL.txt "$tool_dir/AppDir/usr/share/licenses/unique-uid/"
 install -m 644 assets/icon.png "$tool_dir/unique-uid.png"
+# Winit opens this library dynamically, so dependency scanning cannot see it.
+xkb_x11="$(ldconfig -p | awk '$1 == "libxkbcommon-x11.so.0" && !found++ {print $NF}')"
+if [[ -z "$xkb_x11" ]]; then
+    echo "Install libxkbcommon-x11 before packaging the AppImage." >&2
+    exit 1
+fi
 export APPIMAGE_EXTRACT_AND_RUN=1
 export LDAI_OUTPUT="$PWD/dist/Unique.UID_Linux_x64_v$version.AppImage"
 "$tool_dir/$tool_name" --appdir "$tool_dir/AppDir" \
     --executable target/release/unique-uid --desktop-file Scripts/unique-uid.desktop \
-    --icon-file "$tool_dir/unique-uid.png" --output appimage
+    --library "$xkb_x11" --icon-file "$tool_dir/unique-uid.png" --output appimage
 test -s "$LDAI_OUTPUT"

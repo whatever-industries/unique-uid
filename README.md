@@ -14,6 +14,8 @@ Copies receive random 64-bit UIDs that differ from the source and from other cop
 
 Supported layouts are AObjDoc container version 4, ABIN/BINF root versions 14 and 15, and Scpt root versions 2 and 3 with the version-1 rectangle. Opening an AVC copy alongside the original in Media Composer remains to be verified.
 
+On Linux, drag-and-drop uses X11 or XWayland. On Wayland-only desktops, use **Browse…**. The Linux picker uses the XDG Desktop Portal or Zenity.
+
 ## Build and test
 
 With Rust 1.92 or newer, run these from the project folder.
@@ -26,7 +28,7 @@ cargo run --locked
 On Debian or Ubuntu, install the Wayland, XKB, and GL development packages first.
 
 ```sh
-sudo apt-get install libwayland-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev
+sudo apt-get install libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev libegl1-mesa-dev
 ```
 
 On macOS, `./Scripts/build-app.sh` packages the app in `dist/`.
