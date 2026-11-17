@@ -2835,7 +2835,7 @@ checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "unique-uid"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "eframe",
  "getrandom 0.4.3",

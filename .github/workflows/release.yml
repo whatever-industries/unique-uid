@@ -32,8 +32,16 @@ jobs:
             architecture: x86_64
           - runner: windows-2025
             platform: Windows_x64
+            rust_target: x86_64-pc-windows-msvc
+            pe_machine: '8664'
+          - runner: windows-11-arm
+            platform: Windows_ARM
+            rust_target: aarch64-pc-windows-msvc
+            pe_machine: 'aa64'
           - runner: ubuntu-22.04
             platform: Linux_x64
+          - runner: ubuntu-22.04-arm
+            platform: Linux_ARM
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -61,7 +69,17 @@ jobs:
             libegl1-mesa-dev libgl1-mesa-dri libxkbcommon-x11-0 desktop-file-utils patchelf xvfb xauth xdotool
 
       - name: Test
+        if: runner.os != 'Windows'
         run: cargo test --locked
+
+      - name: Test Windows target
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.rust_target }}
+        run: |
+          rustup target add "$TARGET"
+          cargo test --locked --target "$TARGET"
 
       - name: Package macOS app
         if: runner.os == 'macOS'
@@ -84,25 +102,35 @@ jobs:
         shell: pwsh
         env:
           TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.rust_target }}
+          PE_MACHINE: ${{ matrix.pe_machine }}
         run: |
           $ErrorActionPreference = 'Stop'
-          cargo build --locked --release --target-dir target
+          cargo build --locked --release --target-dir target --target $env:TARGET
           if ($LASTEXITCODE -ne 0) { throw 'Rust build failed.' }
           $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
           if (!(Test-Path $nsis)) {
             choco install nsis --yes --no-progress
             if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed.' }
           }
+          $program = Join-Path $PWD "target\$env:TARGET\release\unique-uid.exe"
+          $headers = [IO.File]::ReadAllBytes($program)
+          $peOffset = [BitConverter]::ToInt32($headers, 0x3c)
+          $machine = [BitConverter]::ToUInt16($headers, $peOffset + 4)
+          if ($machine -ne [Convert]::ToUInt16($env:PE_MACHINE, 16)) {
+            throw "The executable has the wrong architecture for $env:PLATFORM."
+          }
           New-Item -Force -ItemType Directory dist | Out-Null
-          $output = Join-Path $PWD "dist\Unique.UID_Windows_x64_$env:TAG.exe"
-          & $nsis "/DVERSION=$($env:TAG.Substring(1))" "/DOUTPUT=$output" Scripts/windows-installer.nsi
+          $output = Join-Path $PWD "dist\Unique.UID_${env:PLATFORM}_$env:TAG.exe"
+          & $nsis "/DVERSION=$($env:TAG.Substring(1))" "/DOUTPUT=$output" "/DAPP_BINARY=$program" Scripts/windows-installer.nsi
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
           $destination = Join-Path $env:RUNNER_TEMP 'unique-uid-install-test'
           $process = Start-Process -FilePath $output -ArgumentList @('/S', "/D=$destination") -Wait -PassThru
           if ($process.ExitCode -ne 0 -or !(Test-Path (Join-Path $destination 'UniqueUID.exe'))) {
             throw 'The silent install did not install Unique UID.'
           }
-          if ((Get-FileHash 'target/release/unique-uid.exe').Hash -ne (Get-FileHash (Join-Path $destination 'UniqueUID.exe')).Hash) {
+          if ((Get-FileHash $program).Hash -ne (Get-FileHash (Join-Path $destination 'UniqueUID.exe')).Hash) {
             throw 'The installed executable differs from the build.'
           }
 
@@ -110,6 +138,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           ./Scripts/build-appimage.sh
@@ -129,7 +158,7 @@ jobs:
             done
             cat "$2"
             exit 1
-          ' bash "dist/Unique.UID_Linux_x64_$TAG.AppImage" "$RUNNER_TEMP/unique-uid.log"
+          ' bash "dist/Unique.UID_${PLATFORM}_$TAG.AppImage" "$RUNNER_TEMP/unique-uid.log"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -160,8 +189,10 @@ jobs:
           arm="Unique.UID_macOS_ARM_${TAG}.zip"
           intel="Unique.UID_macOS_x64_${TAG}.zip"
           windows="Unique.UID_Windows_x64_${TAG}.exe"
+          windows_arm="Unique.UID_Windows_ARM_${TAG}.exe"
           linux="Unique.UID_Linux_x64_${TAG}.AppImage"
-          assets=("release/$arm" "release/$intel" "release/$windows" "release/$linux")
+          linux_arm="Unique.UID_Linux_ARM_${TAG}.AppImage"
+          assets=("release/$arm" "release/$intel" "release/$windows" "release/$windows_arm" "release/$linux" "release/$linux_arm")
           for asset in "${assets[@]}"; do
             test -s "$asset"
           done
@@ -176,7 +207,9 @@ jobs:
             printf '| [**macOS (Apple Silicon)**](%s/%s) |\n' "$base" "$arm"
             printf '| [**macOS (Intel)**](%s/%s) |\n' "$base" "$intel"
             printf '| [**Windows (x64)**](%s/%s) |\n' "$base" "$windows"
+            printf '| [**Windows (ARM64)**](%s/%s) |\n' "$base" "$windows_arm"
             printf '| [**Linux (x64)**](%s/%s) |\n' "$base" "$linux"
+            printf '| [**Linux (ARM64)**](%s/%s) |\n' "$base" "$linux_arm"
           } > release-body.md
 
           title="Unique UID $TAG"

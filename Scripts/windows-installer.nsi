@@ -7,6 +7,9 @@ Name "Unique UID"
 OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\Unique UID"
 InstallDirRegKey HKCU "Software\Unique UID" "InstallDir"
+!ifndef APP_BINARY
+!define APP_BINARY "..\target\release\unique-uid.exe"
+!endif
 !define MUI_ICON "..\assets\icon.ico"
 !define MUI_UNICON "..\assets\icon.ico"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unique UID"
@@ -18,7 +21,7 @@ InstallDirRegKey HKCU "Software\Unique UID" "InstallDir"
 
 Section "Install"
     SetOutPath "$INSTDIR"
-    File /oname=UniqueUID.exe "..\target\release\unique-uid.exe"
+    File /oname=UniqueUID.exe "${APP_BINARY}"
     File "..\LICENSE"
     File "..\assets\Inter-OFL.txt"
     WriteUninstaller "$INSTDIR\Uninstall.exe"

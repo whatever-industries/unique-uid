@@ -2,7 +2,9 @@
 
 A desktop utility for duplicating Avid Media Composer bins and scripts. Written in Rust.
 
-[**Download Unique UID**](https://github.com/whatever-industries/unique-uid/releases/latest) for macOS 14 or newer (Apple Silicon or Intel), Windows (x64), or Linux (x64 AppImage).
+[**Download Unique UID**](https://github.com/whatever-industries/unique-uid/releases/latest) for macOS 14 or newer (Apple Silicon or Intel), Windows (x64 or ARM64), or Linux (x64 or ARM64 AppImage).
+
+![Unique UID window with the file drop, copy count, and output folder controls](docs/screenshot.png)
 
 ## Use
 
@@ -35,7 +37,7 @@ On macOS, `./Scripts/build-app.sh` packages the app in `dist/`.
 
 ## Release
 
-Update the version in `Cargo.toml` and `Cargo.lock`, update `RELEASE_NOTES.md`, and push a matching version tag. GitHub Actions tests and builds both macOS ZIPs, the Windows installer and the Linux AppImage, then publishes a release with a download table.
+Update the version in `Cargo.toml` and `Cargo.lock`, update `RELEASE_NOTES.md`, and push a matching version tag. GitHub Actions tests and builds macOS ZIPs, Windows installers and Linux AppImages for both architectures, then publishes a release with a download table.
 
 ## License
 
