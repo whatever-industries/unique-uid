@@ -6,6 +6,10 @@ A desktop utility for duplicating Avid Media Composer bins and scripts. Written 
 
 ![Unique UID window with the file drop, copy count, and output folder controls](docs/screenshot.png)
 
+## Use case
+
+Use Unique UID when you need to duplicate a bin or script for reuse in the same Avid Media Composer project. A regular file copy keeps the original UID even if you rename it, which can cause a UID collision when you open both files. Unique UID assigns each copy a fresh UID.
+
 ## Use
 
 1. Drop one `.avb` or `.avc` file into the window, or click **Browse…**.
