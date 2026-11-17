@@ -42,7 +42,7 @@ jobs:
           ./Scripts/build-app.sh "${TAG#v}"
           app="dist/Unique UID.app"
           codesign --verify --strict "$app"
-          lipo -verify_arch "$ARCHITECTURE" "$app/Contents/MacOS/UniqueUID"
+          lipo "$app/Contents/MacOS/UniqueUID" -verify_arch "$ARCHITECTURE"
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app" "dist/Unique.UID_${PLATFORM}_${TAG}.zip"
 
       - uses: actions/upload-artifact@v7
