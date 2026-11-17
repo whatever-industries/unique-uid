@@ -12,6 +12,9 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  RUSTUP_TOOLCHAIN: '1.94.1'
+
 jobs:
   build:
     name: Build (${{ matrix.platform }})
@@ -19,36 +22,119 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
+          - runner: macos-15-intel
             platform: macOS_ARM
+            rust_target: aarch64-apple-darwin
             architecture: arm64
           - runner: macos-15-intel
             platform: macOS_x64
+            rust_target: x86_64-apple-darwin
             architecture: x86_64
+          - runner: windows-2025
+            platform: Windows_x64
+          - runner: ubuntu-22.04
+            platform: Linux_x64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Test
-        run: swift test
+      - name: Set up Rust
+        shell: bash
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
-      - name: Build and package the app
+      - name: Verify version
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*$/\1/p' Cargo.toml)"
+          if [[ -z "$version" || "$TAG" != "v$version" ]]; then
+            echo "The release tag must match Cargo.toml (v$version)." >&2
+            exit 1
+          fi
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libgl1-mesa-dev \
+            libegl1-mesa-dev libgl1-mesa-dri desktop-file-utils patchelf xvfb xauth xdotool
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Package macOS app
+        if: runner.os == 'macOS'
         env:
           TAG: ${{ github.ref_name }}
           PLATFORM: ${{ matrix.platform }}
-          ARCHITECTURE: ${{ matrix.architecture }}
+          TARGET: ${{ matrix.rust_target }}
+          ARCH: ${{ matrix.architecture }}
         run: |
           set -euo pipefail
-          ./Scripts/build-app.sh "${TAG#v}"
+          rustup target add "$TARGET"
+          ./Scripts/build-app.sh "$TARGET"
           app="dist/Unique UID.app"
           codesign --verify --strict "$app"
-          lipo "$app/Contents/MacOS/UniqueUID" -verify_arch "$ARCHITECTURE"
+          lipo "$app/Contents/MacOS/UniqueUID" -verify_arch "$ARCH"
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app" "dist/Unique.UID_${PLATFORM}_${TAG}.zip"
+
+      - name: Package and test Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build --locked --release --target-dir target
+          if ($LASTEXITCODE -ne 0) { throw 'Rust build failed.' }
+          $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (!(Test-Path $nsis)) {
+            choco install nsis --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed.' }
+          }
+          New-Item -Force -ItemType Directory dist | Out-Null
+          $output = Join-Path $PWD "dist\Unique.UID_Windows_x64_$env:TAG.exe"
+          & $nsis "/DVERSION=$($env:TAG.Substring(1))" "/DOUTPUT=$output" Scripts/windows-installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
+          $destination = Join-Path $env:RUNNER_TEMP 'unique-uid-install-test'
+          $process = Start-Process -FilePath $output -ArgumentList @('/S', "/D=$destination") -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or !(Test-Path (Join-Path $destination 'UniqueUID.exe'))) {
+            throw 'The silent install did not install Unique UID.'
+          }
+          if ((Get-FileHash 'target/release/unique-uid.exe').Hash -ne (Get-FileHash (Join-Path $destination 'UniqueUID.exe')).Hash) {
+            throw 'The installed executable differs from the build.'
+          }
+
+      - name: Package and launch Linux AppImage
+        if: runner.os == 'Linux'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ./Scripts/build-appimage.sh
+          export APPIMAGE_EXTRACT_AND_RUN=1 LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run --auto-servernum bash -c '
+            "$1" > "$2" 2>&1 &
+            pid=$!
+            trap "kill $pid 2>/dev/null || true" EXIT
+            for attempt in {1..20}; do
+              if xdotool search --onlyvisible --name "^Unique UID$" >/dev/null; then
+                exit 0
+              fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            cat "$2"
+            exit 1
+          ' bash "dist/Unique.UID_Linux_x64_$TAG.AppImage" "$RUNNER_TEMP/unique-uid.log"
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.platform }}
-          path: dist/Unique.UID_*.zip
+          path: dist/Unique.UID_*
           if-no-files-found: error
 
   publish:
@@ -65,7 +151,7 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Publish both downloads
+      - name: Publish downloads
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -73,10 +159,14 @@ jobs:
           set -euo pipefail
           arm="Unique.UID_macOS_ARM_${TAG}.zip"
           intel="Unique.UID_macOS_x64_${TAG}.zip"
-          assets=("release/$arm" "release/$intel")
+          windows="Unique.UID_Windows_x64_${TAG}.exe"
+          linux="Unique.UID_Linux_x64_${TAG}.AppImage"
+          assets=("release/$arm" "release/$intel" "release/$windows" "release/$linux")
           for asset in "${assets[@]}"; do
-            unzip -tq "$asset"
+            test -s "$asset"
           done
+          unzip -tq "release/$arm"
+          unzip -tq "release/$intel"
 
           base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG"
           {
@@ -85,6 +175,8 @@ jobs:
             printf '| Platform |\n|----------|\n'
             printf '| [**macOS (Apple Silicon)**](%s/%s) |\n' "$base" "$arm"
             printf '| [**macOS (Intel)**](%s/%s) |\n' "$base" "$intel"
+            printf '| [**Windows (x64)**](%s/%s) |\n' "$base" "$windows"
+            printf '| [**Linux (x64)**](%s/%s) |\n' "$base" "$linux"
           } > release-body.md
 
           title="Unique UID $TAG"

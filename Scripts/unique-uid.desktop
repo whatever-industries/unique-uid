@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Unique UID
+Comment=Duplicate Avid bins and scripts with fresh UIDs
+Exec=unique-uid
+Icon=unique-uid
+Terminal=false
+Categories=Utility;
