@@ -116,6 +116,67 @@ fn concurrent_batches_claim_different_names() {
     });
 }
 
+#[test]
+fn candidate_hard_link_cannot_modify_or_replace_the_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("Scene.avb");
+    let occupied = directory.path().join("Scene Copy.avb");
+    let (original, _) = fixture(Kind::Bin, false);
+    fs::write(&source, &original).unwrap();
+    fs::hard_link(&source, &occupied).unwrap();
+
+    let batch = create_copies(&source, directory.path(), 1, HashSet::new()).unwrap();
+    assert!(batch.error.is_none());
+    assert_eq!(batch.copies.len(), 1);
+    assert_eq!(
+        batch.copies[0].path,
+        directory.path().join("Scene Copy 2.avb")
+    );
+    assert_eq!(fs::read(&source).unwrap(), original);
+    assert_eq!(fs::read(&occupied).unwrap(), original);
+}
+
+#[cfg(unix)]
+#[test]
+fn candidate_dangling_symlink_is_skipped() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("Scene.avc");
+    let occupied = directory.path().join("Scene Copy.avc");
+    let missing = directory.path().join("Unrelated.avc");
+    fs::write(&source, fixture(Kind::Script, false).0).unwrap();
+    std::os::unix::fs::symlink(&missing, &occupied).unwrap();
+
+    let batch = create_copies(&source, directory.path(), 1, HashSet::new()).unwrap();
+    assert!(batch.error.is_none());
+    assert_eq!(batch.copies.len(), 1);
+    assert_eq!(
+        batch.copies[0].path,
+        directory.path().join("Scene Copy 2.avc")
+    );
+    assert_eq!(fs::read_link(&occupied).unwrap(), missing);
+    assert!(!missing.exists());
+}
+
+#[test]
+fn malformed_source_does_not_create_output_or_touch_an_existing_copy() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("Scene.avc");
+    let occupied = directory.path().join("Scene Copy.avc");
+    let (mut malformed, _) = fixture(Kind::Script, false);
+    malformed.pop();
+    fs::write(&source, &malformed).unwrap();
+    let (original, _) = fixture(Kind::Script, true);
+    fs::write(&occupied, &original).unwrap();
+
+    assert!(matches!(
+        create_copies(&source, directory.path(), 1, HashSet::new()),
+        Err(Error::Truncated)
+    ));
+    assert_eq!(fs::read(&source).unwrap(), malformed);
+    assert_eq!(fs::read(&occupied).unwrap(), original);
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+}
+
 fn fixture(kind: Kind, big_endian: bool) -> (Vec<u8>, usize) {
     let number = |value: u64, width: usize| {
         if big_endian {
