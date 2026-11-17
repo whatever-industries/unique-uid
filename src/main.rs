@@ -440,9 +440,7 @@ impl UniqueUid {
                                 self.destination = Some(folder);
                             }
                         }
-                        if self.destination.is_some()
-                            && ui.button("↶").on_hover_text("Use source folder").clicked()
-                        {
+                        if self.destination.is_some() && source_folder_button(ui).clicked() {
                             self.destination = None;
                         }
                         let label = self
@@ -603,6 +601,35 @@ impl eframe::App for UniqueUid {
             });
         self.confirm(ctx);
     }
+}
+
+fn source_folder_button(ui: &mut egui::Ui) -> egui::Response {
+    let label = "Use source folder";
+    let icon = ui.next_auto_id();
+    let button = egui::Button::new(egui::Atom::custom(icon, egui::vec2(13.0, 13.0))).atom_ui(ui);
+    let response = &button.response;
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, response.enabled(), label)
+    });
+
+    if let Some(rect) = button.rect(icon) {
+        let point = |x, y| rect.center() + egui::vec2(x, y);
+        let tip = point(-5.0, -1.5);
+        let stroke = Stroke::new(1.5, ui.style().interact(response).text_color());
+        let painter = ui.painter_at(rect);
+        painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
+            [tip, point(2.5, -1.5), point(5.0, -1.5), point(5.0, 4.5)],
+            false,
+            Color32::TRANSPARENT,
+            stroke,
+        ));
+        painter.add(egui::Shape::line(
+            vec![point(-1.5, -5.0), tip, point(-1.5, 2.0)],
+            stroke,
+        ));
+    }
+
+    button.response.on_hover_text(label)
 }
 
 fn file_name(path: &Path) -> String {

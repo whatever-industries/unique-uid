@@ -86,11 +86,7 @@ impl PreparedCopies {
                     .map_err(|error| Error::file("write a copy in", &self.destination, error))?;
 
                 loop {
-                    let suffix = if index == 1 {
-                        format!(" Copy.{}", self.extension)
-                    } else {
-                        format!(" Copy {index}.{}", self.extension)
-                    };
+                    let suffix = format!(" Copy {index}.{}", self.extension);
                     index += 1;
                     let path = self.destination.join(copy_name(&self.stem, &suffix));
                     match file.persist_noclobber(&path) {

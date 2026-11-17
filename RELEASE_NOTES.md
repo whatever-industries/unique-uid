@@ -1,5 +1,4 @@
-## Independent metadata beta
+## Fixes
 
-- Bin copies can give visible clips and timelines fresh MobIDs while keeping the existing media.
-- A copied timeline keeps its original source links. Unique UID asks for confirmation before copying a bin with a timeline.
-- Bin-only copies are available for shared metadata and for unsupported layouts. Script copies continue to receive a fresh script UID.
+- The Save to reset button displays an arrow on every platform. Click it to save copies beside the source file again.
+- Bin and script filenames start with `Copy 1`, followed by `Copy 2` and higher. The app skips existing filenames.

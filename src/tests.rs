@@ -67,16 +67,18 @@ fn batch_skips_existing_names_and_preserves_originals() {
         let directory = tempfile::tempdir().unwrap();
         let (bytes, offset) = fixture(kind, false);
         let source = directory.path().join(format!("Sample.{extension}"));
-        let existing = directory.path().join(format!("Sample Copy.{extension}"));
+        let existing = directory.path().join(format!("Sample Copy 2.{extension}"));
+        let legacy = directory.path().join(format!("Sample Copy.{extension}"));
         fs::write(&source, &bytes).unwrap();
         fs::write(&existing, b"existing").unwrap();
+        fs::write(&legacy, b"legacy").unwrap();
 
         let batch =
             create_copies(&source, directory.path(), 3, HashSet::from([REPLACEMENT])).unwrap();
         assert!(batch.error.is_none());
         assert_eq!(batch.copies.len(), 3);
         let mut used = HashSet::from([0, ORIGINAL, REPLACEMENT]);
-        for (index, copy) in (2..=4).zip(&batch.copies) {
+        for (index, copy) in [1, 3, 4].into_iter().zip(&batch.copies) {
             assert_eq!(
                 copy.path.file_name().unwrap().to_str().unwrap(),
                 format!("Sample Copy {index}.{extension}")
@@ -89,7 +91,8 @@ fn batch_skips_existing_names_and_preserves_originals() {
         }
         assert_eq!(fs::read(&source).unwrap(), bytes);
         assert_eq!(fs::read(&existing).unwrap(), b"existing");
-        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 5);
+        assert_eq!(fs::read(&legacy).unwrap(), b"legacy");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 6);
     }
 }
 
@@ -111,7 +114,10 @@ fn concurrent_batches_claim_different_names() {
                 batch.copies.into_iter().map(|copy| copy.path)
             })
             .collect();
-        assert_eq!(names.len(), 6);
+        let expected = (1..=6)
+            .map(|index| directory.path().join(format!("Sample Copy {index}.avb")))
+            .collect();
+        assert_eq!(names, expected);
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 7);
     });
 }
@@ -120,7 +126,7 @@ fn concurrent_batches_claim_different_names() {
 fn candidate_hard_link_cannot_modify_or_replace_the_source() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("Scene.avb");
-    let occupied = directory.path().join("Scene Copy.avb");
+    let occupied = directory.path().join("Scene Copy 1.avb");
     let (original, _) = fixture(Kind::Bin, false);
     fs::write(&source, &original).unwrap();
     fs::hard_link(&source, &occupied).unwrap();
@@ -141,7 +147,7 @@ fn candidate_hard_link_cannot_modify_or_replace_the_source() {
 fn candidate_dangling_symlink_is_skipped() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("Scene.avc");
-    let occupied = directory.path().join("Scene Copy.avc");
+    let occupied = directory.path().join("Scene Copy 1.avc");
     let missing = directory.path().join("Unrelated.avc");
     fs::write(&source, fixture(Kind::Script, false).0).unwrap();
     std::os::unix::fs::symlink(&missing, &occupied).unwrap();
@@ -161,7 +167,7 @@ fn candidate_dangling_symlink_is_skipped() {
 fn malformed_source_does_not_create_output_or_touch_an_existing_copy() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("Scene.avc");
-    let occupied = directory.path().join("Scene Copy.avc");
+    let occupied = directory.path().join("Scene Copy 1.avc");
     let (mut malformed, _) = fixture(Kind::Script, false);
     malformed.pop();
     fs::write(&source, &malformed).unwrap();
@@ -376,7 +382,7 @@ mod independent {
         for big in [false, true] {
             let dir = tempfile::tempdir().unwrap();
             let input = dir.path().join("Mixed.avb");
-            let blocked_name = dir.path().join("Mixed Copy.avb");
+            let blocked_name = dir.path().join("Mixed Copy 1.avb");
             fs::write(&blocked_name, b"existing output").unwrap();
             let original = fixture(big);
             fs::write(&input, &original).unwrap();

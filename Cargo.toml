@@ -1,6 +1,6 @@
 [package]
 name = "unique-uid"
-version = "1.2.0-beta.1"
+version = "1.2.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"

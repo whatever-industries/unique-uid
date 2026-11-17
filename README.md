@@ -19,7 +19,7 @@ Use Unique UID when you need to duplicate a bin or script for reuse in the same 
 3. For bins, leave **Independent metadata** checked to give each supported visible clip and timeline a fresh MobID. Uncheck it for a bin-only copy with shared item IDs.
 4. Click **Create Copy** or **Create Copies**. If the bin contains a timeline, confirm that its source links will stay shared. Use **View UIDs** to see the assigned bin or script UIDs and open the output folder.
 
-Every copy receives a random 64-bit document UID. The app skips existing filenames and writes each copy to a new file.
+Every copy receives a random 64-bit document UID. Copies are named `My Bin Copy 1.avb`, `My Bin Copy 2.avb`, and so on. The app skips existing filenames and writes each copy to a new file.
 
 In **Independent metadata** mode, a copied clip has its own metadata and uses the existing media. A copied timeline keeps its original clip, group, and nested timeline links. If a bin contains both a timeline and one of its source clips, the visible clip duplicate has independent metadata while the copied timeline still uses the original clip.
 
