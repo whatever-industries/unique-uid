@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macOS_ARM
+            architecture: arm64
+          - runner: macos-15-intel
+            platform: macOS_x64
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Test
+        run: swift test
+
+      - name: Build and package the app
+        env:
+          TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          ./Scripts/build-app.sh "${TAG#v}"
+          app="dist/Unique UID.app"
+          codesign --verify --strict "$app"
+          lipo -verify_arch "$ARCHITECTURE" "$app/Contents/MacOS/UniqueUID"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app" "dist/Unique.UID_${PLATFORM}_${TAG}.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/Unique.UID_*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Publish both downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          arm="Unique.UID_macOS_ARM_${TAG}.zip"
+          intel="Unique.UID_macOS_x64_${TAG}.zip"
+          assets=("release/$arm" "release/$intel")
+          for asset in "${assets[@]}"; do
+            unzip -tq "$asset"
+          done
+
+          base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG"
+          {
+            cat RELEASE_NOTES.md
+            printf '\n---\n\n## Download\n\n'
+            printf '| Platform |\n|----------|\n'
+            printf '| [**macOS (Apple Silicon)**](%s/%s) |\n' "$base" "$arm"
+            printf '| [**macOS (Intel)**](%s/%s) |\n' "$base" "$intel"
+          } > release-body.md
+
+          title="Unique UID $TAG"
+          draft=$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)
+          case "$draft" in
+            false)
+              echo "Release $TAG is already published."
+              exit 0
+              ;;
+            true)
+              gh release edit "$TAG" --title "$title" --notes-file release-body.md
+              gh release upload "$TAG" "${assets[@]}" --clobber
+              ;;
+            *)
+              gh release create "$TAG" "${assets[@]}" --verify-tag --draft --title "$title" --notes-file release-body.md
+              ;;
+          esac
+
+          gh release edit "$TAG" --draft=false
